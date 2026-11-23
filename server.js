@@ -62,6 +62,35 @@ function handleCallback(req, res) {
 app.get('/api/rapidoreach-callback', handleCallback);
 app.post('/api/rapidoreach-callback', handleCallback);
 
+// ==========================================
+// NAYA AUTO OTP GENERATION ROUTE (ADDED HERE)
+// ==========================================
+app.post('/api/generate-auto-otp', async (req, res) => {
+  try {
+    const { phoneNumber } = req.body;
+    
+    if (!phoneNumber) {
+      return res.status(400).json({ success: false, message: "Phone number required" });
+    }
+
+    // 1. 6-Digit ka secure OTP generate hoga
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const timestamp = new Date();
+
+    // 2. [Optional] Yahan aap apne Database mein OTP save kar sakte hain agar zaroorat ho
+
+    // 3. Response jo app ko mil jayega aur automation smooth ho jayegi
+    return res.status(200).json({
+      success: true,
+      message: "OTP generated successfully and ready for auto-delivery",
+      otp: otp 
+    });
+
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
