@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
+import { saveOtp, mountAuth } from './orbitorx-auth.js';
 
 const app = express();
 app.use(cors());
@@ -63,33 +64,41 @@ app.get('/api/rapidoreach-callback', handleCallback);
 app.post('/api/rapidoreach-callback', handleCallback);
 
 // ==========================================
-// NAYA AUTO OTP GENERATION ROUTE (ADDED HERE)
+// AUTO OTP GENERATION  (+ Firestore me save)
 // ==========================================
 app.post('/api/generate-auto-otp', async (req, res) => {
   try {
     const { phoneNumber } = req.body;
-    
+
     if (!phoneNumber) {
-      return res.status(400).json({ success: false, message: "Phone number required" });
+      return res.status(400).json({ success: false, message: 'Phone number required' });
     }
 
-    // 1. 6-Digit ka secure OTP generate hoga
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const timestamp = new Date();
 
-    // 2. [Optional] Yahan aap apne Database mein OTP save kar sakte hain agar zaroorat ho
+    // OTP Firestore me save ho raha hai (10 min validity) — isse
+    // /auth/custom-token server-side verify kar sakta hai.
+    try {
+      await saveOtp(phoneNumber, otp);
+    } catch (e) {
+      console.error('saveOtp failed:', e.message);
+      // OTP abhi bhi bhejna hai, par verify fail hoga — client ko pata chal jayega
+    }
 
-    // 3. Response jo app ko mil jayega aur automation smooth ho jayegi
     return res.status(200).json({
       success: true,
-      message: "OTP generated successfully and ready for auto-delivery",
-      otp: otp 
+      message: 'OTP generated successfully and ready for auto-delivery',
+      otp: otp,
     });
-
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 });
+
+// ==========================================
+// Firebase custom-token routes  (/auth/ping, /auth/custom-token)
+// ==========================================
+mountAuth(app);
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
