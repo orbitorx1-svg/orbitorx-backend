@@ -87,11 +87,39 @@ export async function saveOtp(mobile, otp, ttlMin = OTP_TTL_MIN) {
   return true;
 }
 
+/**
+ * The app writes the OTP to `users_auth` (mobile, otp, timestamp) and the admin
+ * sends it to the user. So the real check happens here, on the server.
+ */
+async function verifyFromUsersAuth(m, otp) {
+  const snap = await db().collection('users_auth')
+    .where('mobile', '==', '+91' + m).get();
+  if (snap.empty) return false;
+
+  let best = null;
+  snap.forEach((d) => {
+    const v = d.data() || {};
+    if (!best || String(v.timestamp || '') > String(best.timestamp || '')) best = v;
+  });
+  if (!best) return false;
+  if (String(best.otp || '') !== String(otp).trim()) return false;
+
+  const t = Date.parse(best.timestamp || '') || 0;
+  if (t && Date.now() - t > 15 * 60 * 1000) return false;   // 15 minute validity
+  return true;
+}
+
 /** Check an OTP. Returns true once, then the record is deleted. */
 export async function verifyOtp(mobile, otp) {
   const m = cleanMobile(mobile);
   if (m.length !== 10 || !otp) return false;
   if (!adminReady) return false;
+
+  try {
+    if (await verifyFromUsersAuth(m, otp)) return true;
+  } catch (e) {
+    console.error('[auth] users_auth check failed:', e.message);
+  }
 
   const ref = db().collection(OTP_COLLECTION).doc(m);
   const snap = await ref.get();
