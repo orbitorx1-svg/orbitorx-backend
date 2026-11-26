@@ -154,12 +154,38 @@ export function mountAuth(app) {
   app.get('/auth/ping', (_req, res) => {
     res.json({
       ok: true,
-      build: 'v4',
+      build: 'v5',
       project: PROJECT_ID,
       adminReady,
       error: adminReady ? '' : adminError,
       keyPath: KEY_PATH,
     });
+  });
+
+  /* GET /auth/selftest — Firestore aur token dono check karta hai */
+  app.get('/auth/selftest', async (_req, res) => {
+    const out = { build: 'v5', adminReady, adminError };
+    try {
+      const snap = await db().collection('users_auth').limit(3).get();
+      out.usersAuth = 'ok, docs=' + snap.size;
+      const sample = [];
+      snap.forEach((d) => {
+        const v = d.data() || {};
+        sample.push({ mobile: v.mobile || null, hasOtp: !!v.otp, timestamp: v.timestamp || null });
+      });
+      out.sample = sample;
+    } catch (e) {
+      out.usersAuth = 'ERR: ' + e.message;
+      out.usersAuthCode = e.code || '';
+    }
+    try {
+      const t = await createTokenForMobile('9999999999');
+      out.customToken = 'ok, len=' + String(t).length;
+    } catch (e) {
+      out.customToken = 'ERR: ' + e.message;
+      out.customTokenCode = e.code || '';
+    }
+    res.json(out);
   });
 
   app.post('/auth/custom-token', async (req, res) => {
