@@ -154,6 +154,7 @@ export function mountAuth(app) {
   app.get('/auth/ping', (_req, res) => {
     res.json({
       ok: true,
+      build: 'v4',
       project: PROJECT_ID,
       adminReady,
       error: adminReady ? '' : adminError,
