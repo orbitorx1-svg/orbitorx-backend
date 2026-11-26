@@ -1,17 +1,11 @@
 /**
- * orbitorx-auth.js  —  Firebase Admin + custom-token endpoint  (ESM version)
+ * orbitorx-auth.js  —  Firebase Admin + custom-token endpoint  (ESM, crash-safe)
  * ---------------------------------------------------------------------------
- * server.js already uses `import`, so this file is ESM too. Keep both files
- * in the repo root.
- *
- * What it does
- *   1) saveOtp(mobile, otp)   -> stores the OTP in Firestore (otp_verify/<mobile>)
- *                                with a 10 minute expiry.
- *   2) POST /auth/custom-token -> { mobile, otp } verify karta hai aur Firebase
- *                                custom token deta hai. App us token se
- *                                signInWithCustomToken() karega, phir Firestore
- *                                ko request.auth.uid mil jayega.
- *   3) GET  /auth/ping         -> sanity check.
+ * v2 changes
+ *   - Agar Firebase key na mile to server CRASH nahi hoga.
+ *     Baaki routes (rapidoreach etc.) normal chalte rahenge.
+ *   - /auth/ping batayega ki key mili ya nahi.
+ *   - /auth/custom-token 503 dega jab tak key na lage.
  *
  * Setup
  *   npm install firebase-admin
@@ -30,21 +24,42 @@ const OTP_COLLECTION = 'otp_verify';
 const OTP_TTL_MIN = 10;
 const MAX_TRIES = 5;
 
+let adminReady = false;
+let adminError = '';
+
 function loadCredential() {
-  if (process.env.FIREBASE_KEY_JSON) {
-    try { return admin.credential.cert(JSON.parse(process.env.FIREBASE_KEY_JSON)); }
-    catch (e) { console.error('[auth] FIREBASE_KEY_JSON parse failed:', e.message); }
+  try {
+    if (process.env.FIREBASE_KEY_JSON) {
+      return admin.credential.cert(JSON.parse(process.env.FIREBASE_KEY_JSON));
+    }
+    if (fs.existsSync(KEY_PATH)) {
+      return admin.credential.cert(JSON.parse(fs.readFileSync(KEY_PATH, 'utf8')));
+    }
+    adminError = 'key file not found at ' + KEY_PATH;
+    return null;
+  } catch (e) {
+    adminError = 'key load failed: ' + e.message;
+    return null;
   }
-  if (fs.existsSync(KEY_PATH)) {
-    try { return admin.credential.cert(JSON.parse(fs.readFileSync(KEY_PATH, 'utf8'))); }
-    catch (e) { console.error('[auth] key file read failed:', e.message); }
-  }
-  console.error('[auth] No Firebase key found at ' + KEY_PATH);
-  return undefined;
 }
 
-if (!admin.apps.length) {
-  admin.initializeApp({ credential: loadCredential(), projectId: PROJECT_ID });
+try {
+  if (!admin.apps.length) {
+    const cred = loadCredential();
+    if (cred) {
+      admin.initializeApp({ credential: cred, projectId: PROJECT_ID });
+      adminReady = true;
+      console.log('[auth] Firebase Admin ready');
+    } else {
+      console.error('[auth] Firebase Admin NOT ready —', adminError);
+    }
+  } else {
+    adminReady = true;
+  }
+} catch (e) {
+  adminReady = false;
+  adminError = 'initializeApp failed: ' + e.message;
+  console.error('[auth] initializeApp failed:', e.message);
 }
 
 const db = () => admin.firestore();
@@ -62,6 +77,7 @@ export function uidFor(mobile) {
 export async function saveOtp(mobile, otp, ttlMin = OTP_TTL_MIN) {
   const m = cleanMobile(mobile);
   if (m.length !== 10 || !otp) throw new Error('bad mobile/otp');
+  if (!adminReady) throw new Error('firebase admin not ready: ' + adminError);
   await db().collection(OTP_COLLECTION).doc(m).set({
     otp: String(otp),
     createdAt: new Date().toISOString(),
@@ -75,6 +91,8 @@ export async function saveOtp(mobile, otp, ttlMin = OTP_TTL_MIN) {
 export async function verifyOtp(mobile, otp) {
   const m = cleanMobile(mobile);
   if (m.length !== 10 || !otp) return false;
+  if (!adminReady) return false;
+
   const ref = db().collection(OTP_COLLECTION).doc(m);
   const snap = await ref.get();
   if (!snap.exists) return false;
@@ -96,6 +114,7 @@ export async function verifyOtp(mobile, otp) {
 export async function createTokenForMobile(mobile) {
   const m = cleanMobile(mobile);
   if (m.length !== 10) throw new Error('bad mobile');
+  if (!adminReady) throw new Error('firebase admin not ready: ' + adminError);
   return admin.auth().createCustomToken(uidFor(m), {
     phone: '+91' + m,
     provider: 'orbitorx-otp',
@@ -105,11 +124,20 @@ export async function createTokenForMobile(mobile) {
 /** Mount the routes on the existing express app. */
 export function mountAuth(app) {
   app.get('/auth/ping', (_req, res) => {
-    res.json({ ok: true, project: PROJECT_ID, adminReady: admin.apps.length > 0 });
+    res.json({
+      ok: true,
+      project: PROJECT_ID,
+      adminReady,
+      error: adminReady ? '' : adminError,
+      keyPath: KEY_PATH,
+    });
   });
 
   app.post('/auth/custom-token', async (req, res) => {
     try {
+      if (!adminReady) {
+        return res.status(503).json({ error: 'server not configured', detail: adminError });
+      }
       const body = req.body || {};
       const mobile = cleanMobile(body.mobile);
       const otp = String(body.otp || '').trim();
