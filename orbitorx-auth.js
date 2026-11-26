@@ -159,7 +159,7 @@ export function mountAuth(app) {
   app.get('/auth/ping', (_req, res) => {
     res.json({
       ok: true,
-      build: 'v7',
+      build: 'v8',
       project: PROJECT_ID,
       adminReady,
       error: adminReady ? '' : adminError,
@@ -189,9 +189,61 @@ export function mountAuth(app) {
     }
   });
 
+  /* POST /notify — admin panel se push notification bhejne ke liye */
+  app.post('/notify', async (req, res) => {
+    try {
+      if (!adminReady) return res.status(503).json({ error: 'server not configured' });
+
+      const auth = String(req.headers.authorization || '');
+      const idToken = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+      if (!idToken) return res.status(401).json({ error: 'missing token' });
+
+      let dec;
+      try { dec = await admin.auth().verifyIdToken(idToken); }
+      catch (e) { return res.status(401).json({ error: 'invalid token' }); }
+      if (!dec || dec.admin !== true) return res.status(403).json({ error: 'admin only' });
+
+      const body = req.body || {};
+      const m = cleanMobile(body.mobile);
+      const title = String(body.title || '').trim();
+      const text = String(body.body || body.message || '').trim();
+      if (m.length !== 10 || !title) return res.status(400).json({ error: 'mobile and title required' });
+
+      const tokens = new Set();
+      try {
+        const q = await db().collection('fcm_tokens').where('mobile', 'in', ['+91' + m, m]).get();
+        q.forEach((d) => { const v = d.data() || {}; if (v.token) tokens.add(v.token); });
+      } catch (e) { console.warn('[notify] query failed:', e.message); }
+      try {
+        const docRef = await db().collection('fcm_tokens').doc('u' + m).get();
+        if (docRef.exists) { const v = docRef.data() || {}; if (v.token) tokens.add(v.token); }
+      } catch (e) {}
+
+      if (!tokens.size) return res.json({ sent: 0, reason: 'no tokens for this user' });
+
+      const msg = {
+        tokens: Array.from(tokens),
+        notification: { title: title, body: text || 'Tap to open OrbitorX' },
+        data: { title: title, body: text || '', url: String(body.url || '/') },
+        webpush: {
+          notification: {
+            icon: 'https://orbitorx.online/icons/icon-192.png',
+            badge: 'https://orbitorx.online/icons/icon-192.png',
+          },
+          fcmOptions: { link: 'https://orbitorx.online/' },
+        },
+      };
+      const r = await admin.messaging().sendEachForMulticast(msg);
+      return res.json({ sent: r.successCount, failed: r.failureCount });
+    } catch (err) {
+      console.error('[notify] error:', err);
+      return res.status(500).json({ error: 'server error', detail: String(err.message || err) });
+    }
+  });
+
   /* GET /auth/selftest — Firestore aur token dono check karta hai */
   app.get('/auth/selftest', async (_req, res) => {
-    const out = { build: 'v7', adminReady, adminError };
+    const out = { build: 'v8', adminReady, adminError };
     try {
       const snap = await db().collection('users_auth').limit(3).get();
       out.usersAuth = 'ok, docs=' + snap.size;
