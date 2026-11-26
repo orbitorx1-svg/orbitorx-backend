@@ -159,7 +159,7 @@ export function mountAuth(app) {
   app.get('/auth/ping', (_req, res) => {
     res.json({
       ok: true,
-      build: 'v8',
+      build: 'v9',
       project: PROJECT_ID,
       adminReady,
       error: adminReady ? '' : adminError,
@@ -243,7 +243,7 @@ export function mountAuth(app) {
 
   /* GET /auth/selftest — Firestore aur token dono check karta hai */
   app.get('/auth/selftest', async (_req, res) => {
-    const out = { build: 'v8', adminReady, adminError };
+    const out = { build: 'v9', adminReady, adminError };
     try {
       const snap = await db().collection('users_auth').limit(3).get();
       out.usersAuth = 'ok, docs=' + snap.size;
@@ -263,6 +263,23 @@ export function mountAuth(app) {
     } catch (e) {
       out.customToken = 'ERR: ' + e.message;
       out.customTokenCode = e.code || '';
+    }
+    /* FCM send permission check (dry run — koi notification nahi jayegi) */
+    try {
+      await admin.messaging().send({
+        token: 'dry-run-test-token',
+        notification: { title: 't', body: 't' },
+      }, true);
+      out.fcm = 'ok (dry run)';
+    } catch (e) {
+      out.fcm = 'ERR: ' + String((e && e.code) || '') + ' ' + String((e && e.message) || e);
+    }
+    /* token count */
+    try {
+      const snap2 = await db().collection('fcm_tokens').get();
+      out.fcmTokens = snap2.size;
+    } catch (e) {
+      out.fcmTokens = 'ERR: ' + e.message;
     }
     res.json(out);
   });
