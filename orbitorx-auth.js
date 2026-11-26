@@ -159,7 +159,7 @@ export function mountAuth(app) {
   app.get('/auth/ping', (_req, res) => {
     res.json({
       ok: true,
-      build: 'v6',
+      build: 'v7',
       project: PROJECT_ID,
       adminReady,
       error: adminReady ? '' : adminError,
@@ -167,9 +167,31 @@ export function mountAuth(app) {
     });
   });
 
+  /* POST /auth/admin-token — admin panel ke liye token (admin:true claim) */
+  app.post('/auth/admin-token', async (req, res) => {
+    try {
+      if (!adminReady) return res.status(503).json({ error: 'server not configured' });
+      const body = req.body || {};
+      const email = String(body.email || '').trim().toLowerCase();
+      const pass = String(body.password || '');
+      const A_EMAIL = (process.env.ADMIN_EMAIL || 'developer@orbitorx.com').toLowerCase();
+      const A_PASS = process.env.ADMIN_PASSWORD || 'Orbitorx@2026';
+
+      if (!email || email !== A_EMAIL || pass !== A_PASS) {
+        return res.status(401).json({ error: 'invalid credentials' });
+      }
+      const uid = 'admin-' + Buffer.from(email).toString('hex').slice(0, 12);
+      const token = await admin.auth().createCustomToken(uid, { admin: true, email });
+      return res.json({ token, uid });
+    } catch (err) {
+      console.error('[auth] admin-token error:', err);
+      return res.status(500).json({ error: 'server error', detail: String(err.message || err) });
+    }
+  });
+
   /* GET /auth/selftest — Firestore aur token dono check karta hai */
   app.get('/auth/selftest', async (_req, res) => {
-    const out = { build: 'v6', adminReady, adminError };
+    const out = { build: 'v7', adminReady, adminError };
     try {
       const snap = await db().collection('users_auth').limit(3).get();
       out.usersAuth = 'ok, docs=' + snap.size;
