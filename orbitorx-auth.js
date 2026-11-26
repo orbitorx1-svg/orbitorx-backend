@@ -181,7 +181,11 @@ export function mountAuth(app) {
       return res.json({ token, uid: uidFor(mobile) });
     } catch (err) {
       console.error('[auth] custom-token error:', err);
-      return res.status(500).json({ error: 'server error' });
+      return res.status(500).json({
+        error: 'server error',
+        detail: String((err && err.message) || err),
+        code: String((err && err.code) || ''),
+      });
     }
   });
 }
