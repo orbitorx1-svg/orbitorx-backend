@@ -159,7 +159,7 @@ export function mountAuth(app) {
   app.get('/auth/ping', (_req, res) => {
     res.json({
       ok: true,
-      build: 'v9',
+      build: 'v10',
       project: PROJECT_ID,
       adminReady,
       error: adminReady ? '' : adminError,
@@ -243,7 +243,7 @@ export function mountAuth(app) {
 
   /* GET /auth/selftest — Firestore aur token dono check karta hai */
   app.get('/auth/selftest', async (_req, res) => {
-    const out = { build: 'v9', adminReady, adminError };
+    const out = { build: 'v10', adminReady, adminError };
     try {
       const snap = await db().collection('users_auth').limit(3).get();
       out.usersAuth = 'ok, docs=' + snap.size;
@@ -274,10 +274,29 @@ export function mountAuth(app) {
     } catch (e) {
       out.fcm = 'ERR: ' + String((e && e.code) || '') + ' ' + String((e && e.message) || e);
     }
-    /* token count */
+    /* token count + asli test push (pehle token par) */
     try {
       const snap2 = await db().collection('fcm_tokens').get();
       out.fcmTokens = snap2.size;
+      let firstTok = null, firstDoc = null;
+      snap2.forEach((d) => {
+        const v = d.data() || {};
+        if (!firstTok && v.token) { firstTok = v.token; firstDoc = d.id; }
+      });
+      out.firstTokenDoc = firstDoc || null;
+      if (firstTok) {
+        try {
+          const r2 = await admin.messaging().send({
+            token: firstTok,
+            notification: { title: 'OrbitorX test', body: 'Push test from selftest' },
+          });
+          out.realPush = 'ok: ' + String(r2).slice(0, 40);
+        } catch (e) {
+          out.realPush = 'ERR: ' + String((e && e.code) || '') + ' ' + String((e && e.message) || e).slice(0, 160);
+        }
+      } else {
+        out.realPush = 'no token found';
+      }
     } catch (e) {
       out.fcmTokens = 'ERR: ' + e.message;
     }
