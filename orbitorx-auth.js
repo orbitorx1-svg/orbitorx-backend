@@ -92,8 +92,13 @@ export async function saveOtp(mobile, otp, ttlMin = OTP_TTL_MIN) {
  * sends it to the user. So the real check happens here, on the server.
  */
 async function verifyFromUsersAuth(m, otp) {
-  const snap = await db().collection('users_auth')
-    .where('mobile', '==', '+91' + m).get();
+  // data me dono format hain: "+91XXXXXXXXXX" aur "XXXXXXXXXX"
+  let snap = await db().collection('users_auth')
+    .where('mobile', 'in', ['+91' + m, m]).get();
+  if (snap.empty) {
+    snap = await db().collection('users_auth')
+      .where('mobile', '==', '+91 ' + m).get();
+  }
   if (snap.empty) return false;
 
   let best = null;
@@ -154,7 +159,7 @@ export function mountAuth(app) {
   app.get('/auth/ping', (_req, res) => {
     res.json({
       ok: true,
-      build: 'v5',
+      build: 'v6',
       project: PROJECT_ID,
       adminReady,
       error: adminReady ? '' : adminError,
@@ -164,7 +169,7 @@ export function mountAuth(app) {
 
   /* GET /auth/selftest — Firestore aur token dono check karta hai */
   app.get('/auth/selftest', async (_req, res) => {
-    const out = { build: 'v5', adminReady, adminError };
+    const out = { build: 'v6', adminReady, adminError };
     try {
       const snap = await db().collection('users_auth').limit(3).get();
       out.usersAuth = 'ok, docs=' + snap.size;
