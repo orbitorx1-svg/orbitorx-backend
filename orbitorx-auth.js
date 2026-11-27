@@ -159,7 +159,7 @@ export function mountAuth(app) {
   app.get('/auth/ping', (_req, res) => {
     res.json({
       ok: true,
-      build: 'v10',
+      build: 'v11',
       project: PROJECT_ID,
       adminReady,
       error: adminReady ? '' : adminError,
@@ -241,9 +241,47 @@ export function mountAuth(app) {
     }
   });
 
+  /* POST /notify-admin — user ka koi action admin ko push kare */
+  app.post('/notify-admin', async (req, res) => {
+    try {
+      if (!adminReady) return res.status(503).json({ error: 'server not configured' });
+
+      const auth = String(req.headers.authorization || '');
+      const idToken = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+      if (!idToken) return res.status(401).json({ error: 'missing token' });
+
+      let dec;
+      try { dec = await admin.auth().verifyIdToken(idToken); }
+      catch (e) { return res.status(401).json({ error: 'invalid token' }); }
+
+      const body = req.body || {};
+      const title = String(body.title || 'OrbitorX').slice(0, 80);
+      const text = String(body.body || body.message || '').slice(0, 200);
+
+      const snap = await db().collection('fcm_tokens').get();
+      const tokens = [];
+      snap.forEach((d) => {
+        const v = d.data() || {};
+        const uid = String(v.uid || d.id || '');
+        if (v.token && uid.indexOf('admin-') === 0) tokens.push(v.token);
+      });
+      if (!tokens.length) return res.json({ sent: 0, reason: 'no admin tokens' });
+
+      const r = await admin.messaging().sendEachForMulticast({
+        tokens,
+        notification: { title, body: text || 'New activity' },
+        data: { title, body: text, url: '/' },
+      });
+      return res.json({ sent: r.successCount, failed: r.failureCount });
+    } catch (err) {
+      console.error('[notify-admin] error:', err);
+      return res.status(500).json({ error: 'server error', detail: String(err.message || err) });
+    }
+  });
+
   /* GET /auth/selftest — Firestore aur token dono check karta hai */
   app.get('/auth/selftest', async (_req, res) => {
-    const out = { build: 'v10', adminReady, adminError };
+    const out = { build: 'v11', adminReady, adminError };
     try {
       const snap = await db().collection('users_auth').limit(3).get();
       out.usersAuth = 'ok, docs=' + snap.size;
