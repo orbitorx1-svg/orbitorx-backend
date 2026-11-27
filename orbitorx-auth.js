@@ -159,7 +159,7 @@ export function mountAuth(app) {
   app.get('/auth/ping', (_req, res) => {
     res.json({
       ok: true,
-      build: 'v11',
+      build: 'v12',
       project: PROJECT_ID,
       adminReady,
       error: adminReady ? '' : adminError,
@@ -281,7 +281,7 @@ export function mountAuth(app) {
 
   /* GET /auth/selftest — Firestore aur token dono check karta hai */
   app.get('/auth/selftest', async (_req, res) => {
-    const out = { build: 'v11', adminReady, adminError };
+    const out = { build: 'v12', adminReady, adminError };
     try {
       const snap = await db().collection('users_auth').limit(3).get();
       out.usersAuth = 'ok, docs=' + snap.size;
@@ -316,10 +316,13 @@ export function mountAuth(app) {
     try {
       const snap2 = await db().collection('fcm_tokens').get();
       out.fcmTokens = snap2.size;
-      let firstTok = null, firstDoc = null;
+      /* sabse NAYA token use karo (jo abhi register hua ho) */
+      let firstTok = null, firstDoc = null, bestAt = '';
       snap2.forEach((d) => {
         const v = d.data() || {};
-        if (!firstTok && v.token) { firstTok = v.token; firstDoc = d.id; }
+        if (!v.token) return;
+        const at = String(v.updatedAt || '');
+        if (!firstTok || at > bestAt) { firstTok = v.token; firstDoc = d.id; bestAt = at; }
       });
       out.firstTokenDoc = firstDoc || null;
       if (firstTok) {
