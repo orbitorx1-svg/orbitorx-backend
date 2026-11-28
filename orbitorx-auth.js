@@ -159,7 +159,7 @@ export function mountAuth(app) {
   app.get('/auth/ping', (_req, res) => {
     res.json({
       ok: true,
-      build: 'v16',
+      build: 'v17',
       project: PROJECT_ID,
       adminReady,
       error: adminReady ? '' : adminError,
@@ -320,13 +320,17 @@ export function mountAuth(app) {
         const bal = Number(d.balance || 0);
         t.update(userRef, { balance: Math.round((bal + rupees) * 100) / 100 });
         t.set(db().collection('user_transactions').doc(), {
+          transactionID: token || dedupeId,
           mobile: d.mobile || '',
+          email: d.email || '',
           customUserID: userId,
-          type: 'Offerwall',
+          userName: d.fullName || '',
+          type: 'credit',
+          source: 'pubscale_offerwall',
+          title: 'Offerwall Reward',
           amount: rupees,
           coins: value,
-          transactionID: token || dedupeId,
-          status: 'Completed',
+          status: 'Success',
           timestamp: new Date().toISOString(),
         });
       });
@@ -408,7 +412,7 @@ export function mountAuth(app) {
 
   /* GET /auth/selftest — Firestore aur token dono check karta hai */
   app.get('/auth/selftest', async (_req, res) => {
-    const out = { build: 'v16', adminReady, adminError };
+    const out = { build: 'v17', adminReady, adminError };
     try {
       const snap = await db().collection('users_auth').limit(3).get();
       out.usersAuth = 'ok, docs=' + snap.size;
