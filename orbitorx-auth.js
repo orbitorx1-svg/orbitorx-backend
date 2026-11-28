@@ -159,7 +159,7 @@ export function mountAuth(app) {
   app.get('/auth/ping', (_req, res) => {
     res.json({
       ok: true,
-      build: 'v13',
+      build: 'v14',
       project: PROJECT_ID,
       adminReady,
       error: adminReady ? '' : adminError,
@@ -283,9 +283,70 @@ export function mountAuth(app) {
     }
   });
 
+  /* POST /notify-bulk — admin sab users ya chune hue users ko bheje */
+  app.post('/notify-bulk', async (req, res) => {
+    try {
+      if (!adminReady) return res.status(503).json({ error: 'server not configured' });
+
+      const auth = String(req.headers.authorization || '');
+      const idToken = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+      if (!idToken) return res.status(401).json({ error: 'missing token' });
+      let dec;
+      try { dec = await admin.auth().verifyIdToken(idToken); }
+      catch (e) { return res.status(401).json({ error: 'invalid token' }); }
+      if (!dec || dec.admin !== true) return res.status(403).json({ error: 'admin only' });
+
+      const b = req.body || {};
+      const title = String(b.title || '').trim().slice(0, 90);
+      const text = String(b.body || b.message || '').trim().slice(0, 300);
+      const img = String(b.image || '').trim();
+      if (!title) return res.status(400).json({ error: 'title required' });
+
+      const wantAll = b.all === true;
+      const wanted = new Set((Array.isArray(b.mobiles) ? b.mobiles : []).map((x) => cleanMobile(x)).filter(Boolean));
+
+      const snap = await db().collection('fcm_tokens').get();
+      const tokens = [];
+      snap.forEach((d) => {
+        const v = d.data() || {};
+        if (!v.token) return;
+        if (wantAll) { tokens.push(v.token); return; }
+        const m = cleanMobile(v.mobile || d.id || '');
+        if (m && wanted.has(m)) tokens.push(v.token);
+      });
+      if (!tokens.length) return res.json({ sent: 0, failed: 0, reason: 'no matching tokens' });
+
+      const notif = { title: title, body: text || 'Open OrbitorX' };
+      const data = { title: title, body: text || '', url: '/' };
+      if (img) { notif.image = img; data.image = img; }
+
+      let sent = 0, failed = 0;
+      for (let i = 0; i < tokens.length; i += 500) {
+        const chunk = tokens.slice(i, i + 500);
+        const r = await admin.messaging().sendEachForMulticast({
+          tokens: chunk,
+          notification: notif,
+          data: data,
+          webpush: {
+            notification: Object.assign({
+              icon: 'https://orbitorx.online/icons/icon-192.png',
+              badge: 'https://orbitorx.online/icons/icon-192.png',
+            }, img ? { image: img } : {}),
+            fcmOptions: { link: 'https://orbitorx.online/' },
+          },
+        });
+        sent += r.successCount; failed += r.failureCount;
+      }
+      return res.json({ sent: sent, failed: failed, tokens: tokens.length });
+    } catch (err) {
+      console.error('[notify-bulk] error:', err);
+      return res.status(500).json({ error: 'server error', detail: String(err.message || err) });
+    }
+  });
+
   /* GET /auth/selftest — Firestore aur token dono check karta hai */
   app.get('/auth/selftest', async (_req, res) => {
-    const out = { build: 'v13', adminReady, adminError };
+    const out = { build: 'v14', adminReady, adminError };
     try {
       const snap = await db().collection('users_auth').limit(3).get();
       out.usersAuth = 'ok, docs=' + snap.size;
