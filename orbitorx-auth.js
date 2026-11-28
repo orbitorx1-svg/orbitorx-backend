@@ -159,7 +159,7 @@ export function mountAuth(app) {
   app.get('/auth/ping', (_req, res) => {
     res.json({
       ok: true,
-      build: 'v17',
+      build: 'v18',
       project: PROJECT_ID,
       adminReady,
       error: adminReady ? '' : adminError,
@@ -285,6 +285,22 @@ export function mountAuth(app) {
   });
 
   /* ---------- PUBSCALE OFFERWALL CALLBACK ---------- */
+  const psRate = () => {
+    const raw = String(process.env.PUBSCALE_COIN_VALUE == null ? '' : process.env.PUBSCALE_COIN_VALUE).trim().replace(',', '.');
+    const n = Number(raw);
+    if (!isFinite(n) || n <= 0) return 0.03;   // default: 1 coin = Rs 0.03
+    return n;
+  };
+  app.get('/pubscale-info', (_req, res) => {
+    res.json({
+      ok: true,
+      rate: psRate(),
+      rawEnv: String(process.env.PUBSCALE_COIN_VALUE == null ? '(not set)' : process.env.PUBSCALE_COIN_VALUE),
+      keySet: !!process.env.PUBSCALE_CALLBACK_KEY,
+      example1000coins: Math.round(1000 * psRate() * 100) / 100,
+    });
+  });
+
   const pubscaleHandler = async (req, res) => {
     try {
       if (!adminReady) return res.status(503).send('not configured');
@@ -296,22 +312,23 @@ export function mountAuth(app) {
       const key = String(q.key || '').trim();
 
       const EXPECT = String(process.env.PUBSCALE_CALLBACK_KEY || '');
-      if (EXPECT && key !== EXPECT) return res.status(401).send('bad key');
-      if (!userId || !value) return res.status(400).send('bad params');
+      if (EXPECT && key !== EXPECT) return res.status(401).json({ ok: false, error: 'bad key' });
+      if (!userId || !value) return res.status(400).json({ ok: false, error: 'bad params' });
 
       const dedupeId = token || (userId + '_' + value + '_' + Math.floor(Date.now() / 60000));
       const dedupeRef = db().collection('pubscale_callbacks').doc(dedupeId);
       const seen = await dedupeRef.get();
-      if (seen.exists) return res.status(200).send('duplicate');
+      if (seen.exists) return res.status(200).json({ ok: true, status: 'duplicate' });
 
       const snap = await db().collection('user_profiles').where('customUserID', '==', userId).limit(1).get();
       if (snap.empty) {
         await dedupeRef.set({ q: q, status: 'no_user', at: new Date().toISOString() });
-        return res.status(200).send('no user');
+        return res.status(200).json({ ok: false, error: 'no user', userId: userId });
       }
 
-      const rate = Number(process.env.PUBSCALE_COIN_VALUE || 0.8);   // rupees per coin
+      const rate = psRate();   // rupees per coin (sanitised)
       const rupees = Math.round(value * rate * 100) / 100;
+      if (!isFinite(rupees) || rupees <= 0) return res.status(400).json({ ok: false, error: 'bad rate', rate: rate });
       const userRef = snap.docs[0].ref;
 
       await db().runTransaction(async (t) => {
@@ -336,10 +353,10 @@ export function mountAuth(app) {
       });
 
       await dedupeRef.set({ q: q, status: 'credited', rupees: rupees, at: new Date().toISOString() });
-      return res.status(200).send('OK');
+      return res.status(200).json({ ok: true, credited: rupees, coins: value, userId: userId });
     } catch (err) {
       console.error('[pubscale] error:', err);
-      return res.status(500).send('error');
+      return res.status(500).json({ ok: false, error: 'server error', detail: String(err.message || err) });
     }
   };
   app.get('/pubscale-callback', pubscaleHandler);
@@ -412,7 +429,7 @@ export function mountAuth(app) {
 
   /* GET /auth/selftest — Firestore aur token dono check karta hai */
   app.get('/auth/selftest', async (_req, res) => {
-    const out = { build: 'v17', adminReady, adminError };
+    const out = { build: 'v18', adminReady, adminError };
     try {
       const snap = await db().collection('users_auth').limit(3).get();
       out.usersAuth = 'ok, docs=' + snap.size;
