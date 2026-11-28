@@ -159,7 +159,7 @@ export function mountAuth(app) {
   app.get('/auth/ping', (_req, res) => {
     res.json({
       ok: true,
-      build: 'v15',
+      build: 'v16',
       project: PROJECT_ID,
       adminReady,
       error: adminReady ? '' : adminError,
@@ -284,6 +284,63 @@ export function mountAuth(app) {
     }
   });
 
+  /* ---------- PUBSCALE OFFERWALL CALLBACK ---------- */
+  const pubscaleHandler = async (req, res) => {
+    try {
+      if (!adminReady) return res.status(503).send('not configured');
+      const q = Object.assign({}, req.query, req.body || {});
+
+      const userId = String(q.user_id || q.userId || '').trim();
+      const value = Number(q.value || q.reward || 0);
+      const token = String(q.token || q.transaction_id || '').trim();
+      const key = String(q.key || '').trim();
+
+      const EXPECT = String(process.env.PUBSCALE_CALLBACK_KEY || '');
+      if (EXPECT && key !== EXPECT) return res.status(401).send('bad key');
+      if (!userId || !value) return res.status(400).send('bad params');
+
+      const dedupeId = token || (userId + '_' + value + '_' + Math.floor(Date.now() / 60000));
+      const dedupeRef = db().collection('pubscale_callbacks').doc(dedupeId);
+      const seen = await dedupeRef.get();
+      if (seen.exists) return res.status(200).send('duplicate');
+
+      const snap = await db().collection('user_profiles').where('customUserID', '==', userId).limit(1).get();
+      if (snap.empty) {
+        await dedupeRef.set({ q: q, status: 'no_user', at: new Date().toISOString() });
+        return res.status(200).send('no user');
+      }
+
+      const rate = Number(process.env.PUBSCALE_COIN_VALUE || 0.8);   // rupees per coin
+      const rupees = Math.round(value * rate * 100) / 100;
+      const userRef = snap.docs[0].ref;
+
+      await db().runTransaction(async (t) => {
+        const fresh = await t.get(userRef);
+        const d = (fresh.exists && fresh.data()) || {};
+        const bal = Number(d.balance || 0);
+        t.update(userRef, { balance: Math.round((bal + rupees) * 100) / 100 });
+        t.set(db().collection('user_transactions').doc(), {
+          mobile: d.mobile || '',
+          customUserID: userId,
+          type: 'Offerwall',
+          amount: rupees,
+          coins: value,
+          transactionID: token || dedupeId,
+          status: 'Completed',
+          timestamp: new Date().toISOString(),
+        });
+      });
+
+      await dedupeRef.set({ q: q, status: 'credited', rupees: rupees, at: new Date().toISOString() });
+      return res.status(200).send('OK');
+    } catch (err) {
+      console.error('[pubscale] error:', err);
+      return res.status(500).send('error');
+    }
+  };
+  app.get('/pubscale-callback', pubscaleHandler);
+  app.post('/pubscale-callback', pubscaleHandler);
+
   /* POST /notify-bulk — admin sab users ya chune hue users ko bheje */
   app.post('/notify-bulk', async (req, res) => {
     try {
@@ -351,7 +408,7 @@ export function mountAuth(app) {
 
   /* GET /auth/selftest — Firestore aur token dono check karta hai */
   app.get('/auth/selftest', async (_req, res) => {
-    const out = { build: 'v15', adminReady, adminError };
+    const out = { build: 'v16', adminReady, adminError };
     try {
       const snap = await db().collection('users_auth').limit(3).get();
       out.usersAuth = 'ok, docs=' + snap.size;
