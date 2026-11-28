@@ -159,7 +159,7 @@ export function mountAuth(app) {
   app.get('/auth/ping', (_req, res) => {
     res.json({
       ok: true,
-      build: 'v14',
+      build: 'v15',
       project: PROJECT_ID,
       adminReady,
       error: adminReady ? '' : adminError,
@@ -201,7 +201,8 @@ export function mountAuth(app) {
       let dec;
       try { dec = await admin.auth().verifyIdToken(idToken); }
       catch (e) { return res.status(401).json({ error: 'invalid token' }); }
-      if (!dec || dec.admin !== true) return res.status(403).json({ error: 'admin only' });
+      const _isAdmin = dec && (dec.admin === true || String(dec.uid || '').indexOf('admin-') === 0);
+      if (!_isAdmin) return res.status(403).json({ error: 'admin only', uid: String((dec && dec.uid) || '') });
 
       const body = req.body || {};
       const m = cleanMobile(body.mobile);
@@ -294,7 +295,8 @@ export function mountAuth(app) {
       let dec;
       try { dec = await admin.auth().verifyIdToken(idToken); }
       catch (e) { return res.status(401).json({ error: 'invalid token' }); }
-      if (!dec || dec.admin !== true) return res.status(403).json({ error: 'admin only' });
+      const _isAdmin = dec && (dec.admin === true || String(dec.uid || '').indexOf('admin-') === 0);
+      if (!_isAdmin) return res.status(403).json({ error: 'admin only', uid: String((dec && dec.uid) || '') });
 
       const b = req.body || {};
       const title = String(b.title || '').trim().slice(0, 90);
@@ -304,6 +306,7 @@ export function mountAuth(app) {
 
       const wantAll = b.all === true;
       const wanted = new Set((Array.isArray(b.mobiles) ? b.mobiles : []).map((x) => cleanMobile(x)).filter(Boolean));
+      const wantedEmails = new Set((Array.isArray(b.emails) ? b.emails : []).map((x) => String(x || '').trim().toLowerCase()).filter(Boolean));
 
       const snap = await db().collection('fcm_tokens').get();
       const tokens = [];
@@ -312,7 +315,9 @@ export function mountAuth(app) {
         if (!v.token) return;
         if (wantAll) { tokens.push(v.token); return; }
         const m = cleanMobile(v.mobile || d.id || '');
-        if (m && wanted.has(m)) tokens.push(v.token);
+        if (m && wanted.has(m)) { tokens.push(v.token); return; }
+        const em = String(v.email || '').trim().toLowerCase();
+        if (em && wantedEmails.has(em)) { tokens.push(v.token); }
       });
       if (!tokens.length) return res.json({ sent: 0, failed: 0, reason: 'no matching tokens' });
 
@@ -346,7 +351,7 @@ export function mountAuth(app) {
 
   /* GET /auth/selftest — Firestore aur token dono check karta hai */
   app.get('/auth/selftest', async (_req, res) => {
-    const out = { build: 'v14', adminReady, adminError };
+    const out = { build: 'v15', adminReady, adminError };
     try {
       const snap = await db().collection('users_auth').limit(3).get();
       out.usersAuth = 'ok, docs=' + snap.size;
