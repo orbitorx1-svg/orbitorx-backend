@@ -159,7 +159,7 @@ export function mountAuth(app) {
   app.get('/auth/ping', (_req, res) => {
     res.json({
       ok: true,
-      build: 'v12',
+      build: 'v13',
       project: PROJECT_ID,
       adminReady,
       error: adminReady ? '' : adminError,
@@ -221,15 +221,19 @@ export function mountAuth(app) {
 
       if (!tokens.size) return res.json({ sent: 0, reason: 'no tokens for this user' });
 
+      const img = String(body.image || body.imageUrl || '').trim();
+      const notif = { title: title, body: text || 'Tap to open OrbitorX' };
+      const data = { title: title, body: text || '', url: String(body.url || '/') };
+      if (img) { notif.image = img; data.image = img; }
       const msg = {
         tokens: Array.from(tokens),
-        notification: { title: title, body: text || 'Tap to open OrbitorX' },
-        data: { title: title, body: text || '', url: String(body.url || '/') },
+        notification: notif,
+        data: data,
         webpush: {
-          notification: {
+          notification: Object.assign({
             icon: 'https://orbitorx.online/icons/icon-192.png',
             badge: 'https://orbitorx.online/icons/icon-192.png',
-          },
+          }, img ? { image: img } : {}),
           fcmOptions: { link: 'https://orbitorx.online/' },
         },
       };
@@ -281,7 +285,7 @@ export function mountAuth(app) {
 
   /* GET /auth/selftest — Firestore aur token dono check karta hai */
   app.get('/auth/selftest', async (_req, res) => {
-    const out = { build: 'v12', adminReady, adminError };
+    const out = { build: 'v13', adminReady, adminError };
     try {
       const snap = await db().collection('users_auth').limit(3).get();
       out.usersAuth = 'ok, docs=' + snap.size;
